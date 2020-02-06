@@ -1,6 +1,11 @@
 ## ACOLITE Python default settings
 ##
 
+## test cropped scenes for blackfill coverage
+blackfill_skip=True
+blackfill_max=1.0
+blackfill_wave=1600
+
 ## output l2w parameters
 l2w_parameters=
 l2w_mask=True
@@ -8,6 +13,8 @@ l2w_mask_wave=1600
 l2w_mask_threshold=0.0215
 l2w_mask_water_parameters=True
 l2w_mask_negative_rhow=True
+l2w_mask_cirrus=True
+l2w_mask_cirrus_threshold=0.005
 
 ## atmospheric correction settings
 aerosol_correction=dark_spectrum
@@ -18,6 +25,7 @@ gas_transmittance=True
 uoz_default=0.3
 uwv_default=1.5
 pressure=None
+elevation=None
 lut_pressure=True
 dem_pressure=False
 dem_pressure_percentile=25
@@ -46,6 +54,7 @@ dsf_min_tile_aot=0.01
 dsf_plot_retrieved_tiles=True
 dsf_plot_dark_spectrum=True
 dsf_write_tiled_parameters=False
+extra_ac_parameters=False
 
 ## exponential options
 exp_swir_threshold=0.0215
@@ -63,6 +72,9 @@ exp_gamma=None
 ##
 s2_target_res=10
 l8_output_bt=False
+l8_output_lt_tirs=False
+resolved_angles=False
+resolved_angles_write=False
 
 ## output of xy easting and northing
 xy_output=False
@@ -114,6 +126,16 @@ map_points=None
 l1r_nc_compression=True
 l2r_nc_compression=True
 l2w_nc_compression=True
+
+# NetCDF deletion options
+l1r_nc_delete=False
+l2r_nc_delete=False
+l2w_nc_delete=False
+
+# Convert reflectance floats to scaled integers
+l2w_nc_scaled=False
+l2w_nc_scaled_offset=0.02
+l2w_nc_scaled_factor=0.0001
 
 # GeoTIFF export options
 l2r_export_geotiff=False

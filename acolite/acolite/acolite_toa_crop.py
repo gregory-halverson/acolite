@@ -16,11 +16,27 @@
 ##                2018-05-07 (QV) added override keyword
 ##                2018-06-06 (QV) added support for xy outputs
 ##                2018-07-18 (QV) changed acolite import name
-def acolite_toa_crop(scenes, odir, limit=None, nc_compression=True, chunking=True, tile_code=None, s2_target_res=10, 
+##                2018-10-24 (QV) fixed s2 grid name formatting
+##                2018-11-19 (QV) fixed cirrus band output
+##                2019-02-21 (QV) fixed S2 band name issue
+##                2019-03-12 (QV) fixed issue with limits extending out of the scene and saving the L8 PAN/MS data
+##                2019-03-26 (QV) added CF dataset names
+##                2019-04-09 (QV) added pan global dimensions to correspond to 2xMS extended dimensions
+##                2019-04-11 (QV) added check for valid data for cropped scenes (blackfill_skip)
+##                2019-09-11 (QV) skipping Lt in thermal channels when merging S2 tiles
+##                2019-10-02 (QV) added test for MSI L1C files, skip processing for L2A files
+
+def acolite_toa_crop(scenes, odir, limit=None, 
+                     ## skip cropped scenes that are in the "blackfill"
+                     blackfill_skip=True,
+                     blackfill_max=1.0,
+                     blackfill_wave = 1600, 
+                     nc_compression=True, chunking=True, tile_code=None, s2_target_res=10, 
                      nc_write_geo_xy = False, 
                      l8_output_pan=False, l8_output_pan_ms=False, override = True):
     import acolite as pp
-    from numpy import nanmean
+    from numpy import nanmean, nan
+    import numpy as np
     from scipy.ndimage import zoom
     import time, os
 
@@ -56,6 +72,10 @@ def acolite_toa_crop(scenes, odir, limit=None, nc_compression=True, chunking=Tru
                 metafile = safe_files['metadata']['path']
                 granules = safe_files['granules']
                 metadata,bdata= pp.sentinel.scene_meta(metafile)
+                if 'PROCESSING_LEVEL' in metadata:
+                    if metadata['PROCESSING_LEVEL'] != 'Level-1C':
+                         print('Processing of {} files not supported, skipping {}'.format(metadata['PROCESSING_LEVEL'], bundle))
+                         return(1)
             except:
                 data_type = None
 
@@ -67,11 +87,11 @@ def acolite_toa_crop(scenes, odir, limit=None, nc_compression=True, chunking=Tru
         if os.path.exists(odir) is False: os.makedirs(odir)
 
         ## set up some variables
-        bands = metadata['BAND_NAMES_ALL']
+        bands = [b.strip('B') for b in metadata['BAND_NAMES_ALL']]
 
         ## get RSR wavelengths
         swaves = pp.shared.sensor_wave(metadata['SATELLITE_SENSOR'])
-        swavesl = [swaves[b] for b in swaves]
+        swavesl = [swaves[b] if b in swaves else nan for b in bands]
 
         ## run through granules (will be one for Landsat, almost always one for S2 - old style S2 files not tested)
         for granule in granules:
@@ -126,8 +146,8 @@ def acolite_toa_crop(scenes, odir, limit=None, nc_compression=True, chunking=Tru
                         grids, proj4_string = grids
                         sub = grids['{}'.format(s2_target_res)]['sub']
                         ## get "extended" xyranges
-                        xrange = grids['grids_region'][s2_target_res]['xrange']
-                        yrange = grids['grids_region'][s2_target_res]['yrange']
+                        xrange = grids['grids_region']['{}'.format(s2_target_res)]['xrange']
+                        yrange = grids['grids_region']['{}'.format(s2_target_res)]['yrange']
 
                 else:
                     p, (grids), proj4_string = pp.sentinel.geo.get_projection(grmeta)
@@ -162,6 +182,27 @@ def acolite_toa_crop(scenes, odir, limit=None, nc_compression=True, chunking=Tru
             if (out_of_scene):
                  print('Region {} out of scene {}'.format(limit,bundle))
                  continue
+
+            ## skip cropped scenes that are in the "blackfill"
+            if (sub is not None) & (blackfill_skip):
+                bi, wave = pp.shared.closest_idx(swavesl, blackfill_wave)
+                if data_type == 'Landsat':
+                    band_name = metadata['BANDS_ALL'][bi]
+                if data_type == 'Sentinel':
+                    band_name = metadata['BAND_NAMES'][bi]
+                parname_t = 'rhot_{}'.format(wave)
+                if data_type == 'NetCDF':
+                    band_data = pp.shared.nc_data(granule, parname_t)
+                if data_type == 'Landsat':
+                    band_data = pp.landsat.get_rtoa(bundle, metadata, band_name, sub=sub)
+                if data_type == 'Sentinel':
+                    band_data = pp.sentinel.get_rtoa(bundle, metadata, bdata, safe_files[granule], band_name, target_res=s2_target_res, sub=grids)
+                npx = band_data.shape[0] * band_data.shape[1]
+                nbf = npx - len(np.where(np.isfinite(band_data))[0])
+                band_data = None
+                if (nbf/npx) >= float(blackfill_max):
+                    print('Skipping scene as crop is {:.0f}% blackfill'.format(100*nbf/npx))
+                    continue
             
             ## set up new file and make lat/lon datasets
             if (bundle_id == 0) or (new):
@@ -202,11 +243,14 @@ def acolite_toa_crop(scenes, odir, limit=None, nc_compression=True, chunking=Tru
                     lon, lat = pp.landsat.geo.get_ll(metadata, limit=limit, extend_limit=True)
                 if data_type == 'Sentinel':
                     lon, lat = pp.sentinel.geo.get_ll(grmeta, limit=limit, extend_limit=True, resolution=s2_target_res)
+                crop_dims = lon.shape
 
-                pp.output.nc_write(ncfile, 'lon', lon, new=new, attributes=attributes, 
+                pp.output.nc_write(ncfile, 'lon', lon, new=new, attributes=attributes,
+                                    dataset_attributes={'standard_name':'longitude', 'units':'degree_east'},
                                     nc_compression=nc_compression, chunking=chunking)
                 new = False
                 pp.output.nc_write(ncfile, 'lat', lat, new=new, attributes=attributes, 
+                                    dataset_attributes={'standard_name':'latitude', 'units':'degree_north'},
                                     nc_compression=nc_compression, chunking=chunking)
 
                 ##########################
@@ -253,7 +297,7 @@ def acolite_toa_crop(scenes, odir, limit=None, nc_compression=True, chunking=Tru
                         ds_att = {'band_name':band_name}
                     else:
                         band_data = pp.landsat.get_rtoa(bundle, metadata, band_name, sub=sub)
-                        wave = metadata['WAVES_ALL'][b]
+                        wave = swavesl[b] #metadata['WAVES_ALL'][b]
                         oname = 'rhot_{}'.format(wave)
                         ds_att = {'wavelength':float(wave),'band_name':band_name}
 
@@ -268,14 +312,37 @@ def acolite_toa_crop(scenes, odir, limit=None, nc_compression=True, chunking=Tru
                     ds_att = {'wavelength':float(wave), 'band_name':band_name}
                 if band_data is None: continue
 
+                ## add CF names
+                if 'bt' in oname:
+                    ds_att['standard_name']='toa_brightness_temperature'
+                    ds_att['units']='K'
+                else:
+                    ds_att['standard_name']='toa_bidirectional_reflectance'
+                    ds_att['units']=1
+
                 ## write to NetCDF file
                 pp.output.nc_write(ncfile, oname, band_data, dataset_attributes=ds_att, new=new, offset=offset, replace_nan=replace_nan,
+                                           attributes=attributes, nc_compression=nc_compression, chunking=chunking)
+
+                ## also write Lt for thermal bands
+                if (data_type == 'Landsat'):
+                    if band_name in metadata['BANDS_THERMAL']:
+                        band_data = pp.landsat.get_bt(bundle, metadata, band_name, sub=sub, return_radiance=True)
+                        oname = 'lt{}'.format(band_name)
+                        wave = None
+                        ds_att = {'band_name':band_name}
+                        ds_att['standard_name']='toa_brightness_temperature'
+                        ds_att['units']='W/m2srmum'
+                        ## write to NetCDF file
+                        pp.output.nc_write(ncfile, oname, band_data, dataset_attributes=ds_att, new=new, offset=offset, replace_nan=replace_nan,
                                            attributes=attributes, nc_compression=nc_compression, chunking=chunking)
 
             ## read pan band if requested
             if (data_type == 'Landsat') and (l8_output_pan or l8_output_pan_ms):
                 if metadata["SATELLITE"] in ['LANDSAT_7','LANDSAT_8']:
                     pan_offset = [o*2 for o in offset]
+                    pan_crop_dims = (crop_dims[0]*2, crop_dims[1]*2)
+
                     if metadata['SATELLITE'] == 'LANDSAT_7': panband = 8
                     if metadata['SATELLITE'] == 'LANDSAT_8': panband = 8
                     band_data = pp.landsat.get_rtoa(bundle, metadata, panband, sub=sub, pan=True)
@@ -283,18 +350,17 @@ def acolite_toa_crop(scenes, odir, limit=None, nc_compression=True, chunking=Tru
                     ## write PAN to NetCDF file
                     if l8_output_pan:
                         oname = 'rhot_pan'
-                        pp.output.nc_write(ncfile_pan, oname, band_data, new=new_pan, offset=pan_offset, replace_nan=replace_nan,
+                        pp.output.nc_write(ncfile_pan, oname, band_data, new=new_pan, global_dims=pan_crop_dims, offset=pan_offset, replace_nan=replace_nan,
                                                    attributes=attributes, nc_compression=nc_compression, chunking=chunking)
                         new_pan=False
 
                     ## write PAN at MS resolution
                     if l8_output_pan_ms:
-                        band_data = zoom(band_data, zoom=0.5, order=1)
                         oname = 'rhot_pan_ms'
-                        pp.output.nc_write(ncfile_pan_ms, oname, band_data, new=new_pan_ms, offset=offset, replace_nan=replace_nan,
+                        band_data = zoom(band_data, zoom=0.5, order=1)
+                        pp.output.nc_write(ncfile_pan_ms, oname, band_data, new=new_pan_ms, global_dims=crop_dims, offset=offset, replace_nan=replace_nan,
                                                    attributes=attributes, nc_compression=nc_compression, chunking=chunking)
                         new_pan_ms=False
-
                     band_data=None
 
     if 'ncfile' in locals(): return(ncfile)

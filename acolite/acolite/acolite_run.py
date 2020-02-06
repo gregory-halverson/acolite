@@ -12,12 +12,22 @@
 ##                     2018-07-25 (QV) added check for empty returns by acolite_ac
 ##                     2018-08-02 (QV) added glint correction
 ##                     2018-09-10 (QV) added additional L2W parameter check
+##                     2018-11-19 (QV) removed the disabling of ancillary data download in GUI
+##                     2018-11-10 (QV) re-disabled the ancillary data download in GUI
+##                     2019-03-26 (QV) added check for returned l2r files
+##                     2019-04-11 (QV) added blackfill_skip
+##                     2019-04-24 (QV) converted dem_pressure_percentile in float
+##                                     added test for met_dir
+##                     2019-07-04 (QV) added nc_delete options, added l2w_nc integerized reflectance output
+##                     2019-07-10 (QV) added output of TIRS Lt
+##                     2019-07-16 (QV) generalised variable copy from settings to config
+##                     2019-11-29 (QV) added extra ac parameters output for fixed DSF
 
 def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, settings=None, quiet=False, ancillary=False, gui=False):
     import os, sys
     import datetime, time
 
-    from acolite import acolite
+    from acolite import acolite, config
     from acolite.output import nc_to_geotiff
 
     print('Launching ACOLITE Python!')
@@ -37,11 +47,29 @@ def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, setti
     if setu['l2w_parameters'] is not None:
         if ('bt10' in setu['l2w_parameters']) or ('bt11' in setu['l2w_parameters']):
             setu['l8_output_bt'] = True
+        if ('lt10' in setu['l2w_parameters']) or ('lt11' in setu['l2w_parameters']):
+            setu['l8_output_lt_tirs'] = True
+    
+    ## making sure that the type is a list for the next step
+    if setu['l2w_parameters'] is not None and type(setu['l2w_parameters']) is not list: 
+        setu['l2w_parameters'] = [setu['l2w_parameters']]
+    
+    ## removing any space between commas and the parameter name.
+    if setu['l2w_parameters'] is not None: 
+        setu['l2w_parameters'] = [par.strip() for par in setu['l2w_parameters'] if par]
 
     if (gui) & (setu['ancillary_data']): 
         print('Disabling ancillary data in GUI due to download bug.')
         print('Please use the CLI for ancillary download.')
         setu['ancillary_data'] = False
+
+    ## generic override for config
+    for key in config:
+        if key in setu: config[key] = setu[key]
+
+    ## generic override for acolite config
+    for key in acolite.config:
+        if key in setu: acolite.config[key] = setu[key]
 
     ## check if we have an inputfile
     if (setu['inputfile'] is None):
@@ -103,6 +131,9 @@ def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, setti
         ### run toa crop netcdf for these scenes and limit
         scenes = acolite.acolite_toa_crop(inputfile, setu['output'], 
                                           limit=setu['limit'], 
+                                          blackfill_skip=setu['blackfill_skip'], 
+                                          blackfill_max=setu['blackfill_max'], 
+                                          blackfill_wave=setu['blackfill_wave'], 
                                           s2_target_res=setu['s2_target_res'], 
                                           l8_output_pan=setu['rgb_pan_sharpen'], 
                                           l8_output_pan_ms=l8_output_pan_ms,
@@ -132,6 +163,11 @@ def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, setti
                                                         ## select aerosol correction
                                                         aerosol_correction=setu['aerosol_correction'], 
 
+                                                        ## skip cropped scenes in the blackfill
+                                                        blackfill_skip=setu['blackfill_skip'], 
+                                                        blackfill_max=setu['blackfill_max'], 
+                                                        blackfill_wave=setu['blackfill_wave'], 
+
                                                         ## generic settings
                                                         ancillary_data=setu['ancillary_data'],
                                                         gas_transmittance=setu['gas_transmittance'],
@@ -140,6 +176,7 @@ def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, setti
                                                         sky_correction=setu['sky_correction'],
                                                         sky_correction_option=setu['sky_correction_option'],
 
+                                                        ## glint correction settings
                                                         glint_correction = setu['glint_correction'],
                                                         glint_force_band = setu['glint_force_band'],
                                                         glint_mask_rhos_band = setu['glint_mask_rhos_band'],
@@ -147,10 +184,12 @@ def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, setti
                                                         glint_write_rhog_ref = setu['glint_write_rhog_ref'],
                                                         glint_write_rhog_all = setu['glint_write_rhog_all'],
 
+                                                        ## elevation and pressure options
                                                         pressure=setu['pressure'],
+                                                        elevation=setu['elevation'],
                                                         lut_pressure=setu['lut_pressure'],
                                                         dem_pressure=setu['dem_pressure'],
-                                                        dem_pressure_percentile=setu['dem_pressure_percentile'],
+                                                        dem_pressure_percentile=float(setu['dem_pressure_percentile']),
 
                                                         ## for dark spectrum
                                                         dsf_path_reflectance=setu['dsf_path_reflectance'],
@@ -164,6 +203,7 @@ def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, setti
                                                         dsf_plot_retrieved_tiles=setu['dsf_plot_retrieved_tiles'],
                                                         dsf_plot_dark_spectrum=setu['dsf_plot_dark_spectrum'],
                                                         dsf_write_tiled_parameters=setu['dsf_write_tiled_parameters'],
+                                                        extra_ac_parameters=setu['extra_ac_parameters'],
 
                                                         ## for exponential
                                                         exp_swir_threshold=float(setu['exp_swir_threshold']),
@@ -177,6 +217,9 @@ def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, setti
                                                         exp_alpha_weighted=setu['exp_alpha_weighted'],
                                                         exp_epsilon=setu['exp_epsilon'],
 
+                                                        #cirrus_correction = setu['cirrus_correction'],
+                                                        #cirrus_method = setu['cirrus_method'],
+
                                                         ## Gains
                                                         gains=setu['gains'],
                                                         gains_l5_tm=setu['gains_l5_tm'],
@@ -188,11 +231,18 @@ def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, setti
                                                         ## NetCDF compression
                                                         l1r_nc_compression=setu['l1r_nc_compression'],
                                                         l2r_nc_compression=setu['l2r_nc_compression'],
+                                                        l1r_nc_delete=setu['l1r_nc_delete'],
+
+                                                        ## resolved angles
+                                                        resolved_angles=setu['resolved_angles'],
+                                                        resolved_angles_write=setu['resolved_angles_write'],
 
                                                         ## Sentinel-2 output resolution
                                                         s2_target_res=setu['s2_target_res'],
                                                         ## L8 output BT
                                                         l8_output_bt=setu['l8_output_bt'],
+                                                        l8_output_lt_tirs=setu['l8_output_lt_tirs'],
+
                                                         ## L8 output PAN band
                                                         l8_output_pan=setu['rgb_pan_sharpen'],
                                                         l8_output_pan_ms=l8_output_pan_ms, 
@@ -202,7 +252,9 @@ def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, setti
                                                         ## output Rayleigh corrected reflectances
                                                         nc_write_rhorc=nc_write_rhorc
                                                         )
-        l2r_files+=ret
+        if type(ret) is not int: 
+            l2r_files+=ret
+        else: continue
 
         ## output GeoTIFF
         if (setu['l2r_export_geotiff']) & (len(ret) > 0):
@@ -242,16 +294,22 @@ def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, setti
 
             for sc, scene in enumerate(l2r_files):
                 print('Computing L2W parameters for scene {} of {}...'.format(sc+1, l2r_nsc))
-                print(scene)
                 ret = acolite.acolite_l2w(scene, setu['output'], parameters=setu['l2w_parameters'], retain_data_read=True,
                                           l2w_mask=setu['l2w_mask'],
                                           l2w_mask_wave=float(setu['l2w_mask_wave']),
                                           l2w_mask_threshold=float(setu['l2w_mask_threshold']),
                                           l2w_mask_water_parameters=setu['l2w_mask_water_parameters'],
                                           l2w_mask_negative_rhow=setu['l2w_mask_negative_rhow'],
-                                          nc_compression=setu['l2w_nc_compression'],)
+                                          l2w_mask_cirrus=setu['l2w_mask_cirrus'],
+                                          l2w_mask_cirrus_threshold=float(setu['l2w_mask_cirrus_threshold']),
+                                          nc_compression=setu['l2w_nc_compression'],
+                                          rho_as_int = setu['l2w_nc_scaled'], 
+                                          rho_scale_factor=setu['l2w_nc_scaled_factor'], 
+                                          rho_add_offset=setu['l2w_nc_scaled_offset'])
                 if type(ret) is not list: ret = [ret]
                 l2w_files+=ret
+
+                if setu['l2r_nc_delete']: os.remove(scene)
 
                 ## output GeoTIFF
                 if setu['l2w_export_geotiff']:
@@ -277,6 +335,8 @@ def acolite_run(inputfile=None, output=None, limit=None, merge_tiles=None, setti
                                              map_points=setu["map_points"], map_fillcolor=setu['map_fillcolor'], 
                                              rgb_pan_sharpen=setu['rgb_pan_sharpen'])
 
+                if setu['l2w_nc_delete']:
+                    for f in ret: os.remove(f)
     ## done
     print('Finished processing {} scene{}.'.format(nsc,'' if nsc == 1 else 's'))
     return(0)
